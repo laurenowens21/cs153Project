@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Synthetic Data Augmentation for Rare Chest X-Ray Finding Classification
 
 ## Project Overview
@@ -151,3 +152,7 @@ This project uses AI systems as the *subject of study* as well as *tools for dev
 - **Cloudflare Workers AI** (Stable Diffusion XL): generates synthetic chest X-ray images
   (pipeline component).
 - All experimental results and analysis were performed by the project authors.
+=======
+# cs153Project
+Synthetic Data Generation for Patient Health Information Protection in Large Language Models
+>>>>>>> d2c3b3225c7c6043d1d3362e8154a09034a30b2c
