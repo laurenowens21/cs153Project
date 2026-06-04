@@ -1,0 +1,14 @@
+{
+  "per_class_auc": {
+    "Emphysema": 0.5767,
+    "No_Finding": 0.7094,
+    "Pneumothorax": 0.6749
+  },
+  "macro_auc": 0.6537,
+  "per_class_f1": {
+    "Emphysema": 0.2857,
+    "No_Finding": 0.0548,
+    "Pneumothorax": 0.6013
+  },
+  "macro_f1": 0.3139
+}

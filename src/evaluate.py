@@ -1,96 +1,98 @@
 """
 evaluate.py
 
-Trains a MobileNetV3-Small binary classifier on rare chest X-ray findings under
-two conditions:
-    (A) real images only
-    (B) real images + synthetic images
+Runs a controlled data-augmentation experiment on rare chest X-ray findings.
 
-Outputs per-condition AUC, F1, and confusion matrix plots to results/.
+Condition A — Baseline:
+    Train MobileNetV3-Small (ImageNet pretrained) on real images only.
 
-The script expects:
-    data/rare_findings/<finding>/*.png       — real NIH images (from scripts/filter_images.py)
-    data/synthetic_images/<finding>/*.png    — synthetic images from generate_images.py
+Condition B — Augmented:
+    Train a fresh MobileNetV3-Small (ImageNet pretrained) on real + synthetic images.
+
+Both conditions are evaluated on the same held-out test set (real images only).
+Per-class and macro AUC, F1, and confusion matrices are saved to results/.
 
 Usage:
-    python src/evaluate.py [--finding Pneumothorax] [--epochs 10] [--batch-size 32]
+    python src/evaluate.py [--epochs 10] [--batch-size 32] [--seed 42]
 """
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+from PIL import Image
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     classification_report,
     confusion_matrix,
     f1_score,
     roc_auc_score,
-    roc_curve,
 )
-from torch.utils.data import DataLoader, Dataset, random_split
+from sklearn.model_selection import StratifiedShuffleSplit
+from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import models, transforms
-from PIL import Image
-from tqdm import tqdm
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).parent.parent
-DATA_DIR = ROOT / "data"
+REAL_DIR = ROOT / "data" / "rare_findings"
+SYNTH_DIR = ROOT / "data" / "synthetic_images"
 RESULTS_DIR = ROOT / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-REAL_IMAGE_DIR = DATA_DIR / "rare_findings"
-SYNTH_IMAGE_DIR = DATA_DIR / "synthetic_images"
+# ── Constants ─────────────────────────────────────────────────────────────────
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+CLASSES = ["Emphysema", "No_Finding", "Pneumothorax"]  # sorted for reproducibility
+CLASS_TO_IDX = {cls: i for i, cls in enumerate(CLASSES)}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
-# ── Dataset ───────────────────────────────────────────────────────────────────
+SEED = 42
+DEVICE = torch.device("cpu")
 
-# ImageNet normalization values — used even for grayscale (replicated to 3ch)
+# ImageNet normalization
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
-TRAIN_TRANSFORM = transforms.Compose(
+TRANSFORM = transforms.Compose(
     [
-        transforms.Grayscale(num_output_channels=3),  # MobileNet expects 3-ch
-        transforms.Resize(256),
-        transforms.RandomCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ]
-)
-
-EVAL_TRANSFORM = transforms.Compose(
-    [
-        transforms.Grayscale(num_output_channels=3),
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize((224, 224)),
+        transforms.Grayscale(num_output_channels=3),  # X-rays are grayscale; MobileNet needs 3ch
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ]
 )
 
 
-class ChestXRayDataset(Dataset):
+# ── Dataset ───────────────────────────────────────────────────────────────────
+
+
+class ImageFolderFlat(Dataset):
     """
-    Binary dataset: label 1 for the target finding, 0 for No Finding (negative class).
+    Minimal image dataset that reads from a root directory containing one
+    subdirectory per class. Unlike torchvision's ImageFolder it accepts an
+    explicit class list and ignores any extra subdirectories (e.g. Hernia).
 
     Args:
-        image_paths: List of (path, label) tuples.
-        transform:   torchvision transform pipeline.
+        root:      Directory with <class>/<image> layout.
+        classes:   Ordered list of class names to include.
+        transform: Transform applied to each PIL image.
     """
 
-    def __init__(self, image_paths: list[tuple[Path, int]], transform=None):
-        self.samples = image_paths
+    def __init__(self, root: Path, classes: list[str], transform=None):
         self.transform = transform
+        self.samples: list[tuple[Path, int]] = []
+
+        for cls in classes:
+            cls_dir = root / cls
+            if not cls_dir.exists():
+                continue
+            for p in sorted(cls_dir.iterdir()):
+                if p.suffix.lower() in IMAGE_EXTENSIONS:
+                    self.samples.append((p, CLASS_TO_IDX[cls]))
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -102,231 +104,327 @@ class ChestXRayDataset(Dataset):
             img = self.transform(img)
         return img, label
 
+    def labels(self) -> list[int]:
+        """Return all labels in sample order — used for stratified splitting."""
+        return [label for _, label in self.samples]
 
-def collect_samples(
-    finding: str,
-    include_synthetic: bool,
-    max_negatives: int = 500,
-) -> list[tuple[Path, int]]:
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+
+
+def build_model(num_classes: int) -> nn.Module:
     """
-    Gather (path, label) pairs for one binary classification problem.
-
-    Positives: real images of `finding` + (optionally) synthetic images.
-    Negatives: real images labelled 'No Finding', capped at max_negatives.
-
-    Args:
-        finding:           Target rare finding class name.
-        include_synthetic: Whether to include synthetic images as positives.
-        max_negatives:     Cap on negative-class samples to limit class imbalance.
+    Return a MobileNetV3-Small with ImageNet pretrained weights and a
+    replaced classification head for num_classes outputs.
     """
-    samples = []
-
-    # Positive class: real images
-    real_pos_dir = REAL_IMAGE_DIR / finding
-    if real_pos_dir.exists():
-        for p in real_pos_dir.iterdir():
-            if p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-                samples.append((p, 1))
-
-    # Positive class: synthetic images (condition B only)
-    if include_synthetic:
-        synth_pos_dir = SYNTH_IMAGE_DIR / finding
-        if synth_pos_dir.exists():
-            for p in synth_pos_dir.iterdir():
-                if p.suffix.lower() == ".png" and p.name != "failed.json":
-                    samples.append((p, 1))
-
-    # Negative class: 'No Finding' real images (filter_images.py uses underscore)
-    neg_dir = REAL_IMAGE_DIR / "No_Finding"
-    if neg_dir.exists():
-        neg_paths = [
-            p for p in neg_dir.iterdir()
-            if p.suffix.lower() in {".png", ".jpg", ".jpeg"}
-        ][:max_negatives]
-        samples.extend((p, 0) for p in neg_paths)
-
-    if not samples:
-        raise RuntimeError(
-            f"No images found for finding '{finding}'. "
-            "Ensure real images are in data/rare_findings/<finding>/ "
-            "(run scripts/filter_images.py) and synthetic images are in "
-            "data/synthetic_images/<finding>/ (run scripts/generate_reports.py "
-            "then src/generate_images.py)."
-        )
-
-    return samples
-
-
-def build_model() -> nn.Module:
-    """Return a MobileNetV3-Small with a binary output head."""
     model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.IMAGENET1K_V1)
-    # Replace the classifier head for binary classification
     in_features = model.classifier[-1].in_features
-    model.classifier[-1] = nn.Linear(in_features, 1)
+    model.classifier[-1] = nn.Linear(in_features, num_classes)
     return model.to(DEVICE)
 
 
-def train_one_epoch(
+# ── Training & Evaluation ─────────────────────────────────────────────────────
+
+
+def train(
     model: nn.Module,
     loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
-) -> float:
+    epochs: int,
+    class_weights: torch.Tensor,
+) -> None:
+    """Fine-tune model in place for a fixed number of epochs."""
+    criterion = nn.CrossEntropyLoss(weight=class_weights.to(DEVICE))
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.5)
+
     model.train()
-    running_loss = 0.0
-    for images, labels in loader:
-        images = images.to(DEVICE)
-        labels = labels.float().unsqueeze(1).to(DEVICE)
-
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item() * images.size(0)
-    return running_loss / len(loader.dataset)
+    for epoch in range(1, epochs + 1):
+        running_loss = 0.0
+        for images, labels in loader:
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            optimizer.zero_grad()
+            loss = criterion(model(images), labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item() * images.size(0)
+        scheduler.step()
+        avg_loss = running_loss / len(loader.dataset)
+        print(f"    Epoch {epoch:2d}/{epochs}  loss={avg_loss:.4f}")
 
 
 @torch.no_grad()
-def evaluate_model(model: nn.Module, loader: DataLoader) -> tuple[np.ndarray, np.ndarray]:
-    """Return (true_labels, predicted_probabilities) for the entire loader."""
+def predict(model: nn.Module, loader: DataLoader) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Run inference and return (true_labels, predicted_probabilities).
+    Probabilities have shape (N, num_classes) after softmax.
+    """
     model.eval()
     all_labels, all_probs = [], []
     for images, labels in loader:
-        images = images.to(DEVICE)
-        logits = model(images)
-        probs = torch.sigmoid(logits).cpu().numpy().flatten()
-        all_probs.extend(probs)
+        logits = model(images.to(DEVICE))
+        probs = torch.softmax(logits, dim=1).cpu().numpy()
+        all_probs.append(probs)
         all_labels.extend(labels.numpy())
-    return np.array(all_labels), np.array(all_probs)
+    return np.array(all_labels), np.vstack(all_probs)
 
 
-def run_experiment(
-    finding: str,
-    include_synthetic: bool,
-    epochs: int,
-    batch_size: int,
-    seed: int = 42,
+# ── Metrics ───────────────────────────────────────────────────────────────────
+
+
+def compute_metrics(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    classes: list[str],
 ) -> dict:
     """
-    Full train/eval loop for one experimental condition.
+    Compute per-class and macro AUC and F1.
 
-    Returns a dict with AUC, F1, and per-class counts.
+    Returns a dict ready for JSON serialisation.
     """
-    label = "real+synthetic" if include_synthetic else "real_only"
-    print(f"\n{'='*60}")
-    print(f"  Condition: {label}  |  Finding: {finding}")
-    print(f"{'='*60}")
+    y_pred = y_prob.argmax(axis=1)
 
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    # Per-class AUC (one-vs-rest)
+    per_class_auc = {}
+    for i, cls in enumerate(classes):
+        try:
+            auc = roc_auc_score((y_true == i).astype(int), y_prob[:, i])
+        except ValueError:
+            auc = float("nan")
+        per_class_auc[cls] = round(float(auc), 4)
 
-    samples = collect_samples(finding, include_synthetic)
-    n_pos = sum(1 for _, l in samples if l == 1)
-    n_neg = len(samples) - n_pos
-    print(f"  Positives: {n_pos}  |  Negatives: {n_neg}  |  Total: {len(samples)}")
+    macro_auc = roc_auc_score(y_true, y_prob, multi_class="ovr", average="macro")
 
-    # 80/20 train-test split
-    n_train = int(0.8 * len(samples))
-    n_test = len(samples) - n_train
-    train_raw, test_raw = random_split(
-        samples, [n_train, n_test], generator=torch.Generator().manual_seed(seed)
-    )
-
-    train_ds = ChestXRayDataset(list(train_raw), transform=TRAIN_TRANSFORM)
-    test_ds = ChestXRayDataset(list(test_raw), transform=EVAL_TRANSFORM)
-
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=2)
-
-    model = build_model()
-
-    # Positive-class weighting to handle imbalance
-    pos_weight = torch.tensor([n_neg / max(n_pos, 1)], device=DEVICE)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
-
-    for epoch in range(1, epochs + 1):
-        loss = train_one_epoch(model, train_loader, optimizer, criterion)
-        scheduler.step()
-        if epoch % max(1, epochs // 5) == 0:
-            print(f"  Epoch {epoch:3d}/{epochs}  loss={loss:.4f}")
-
-    y_true, y_prob = evaluate_model(model, test_loader)
-    y_pred = (y_prob >= 0.5).astype(int)
-
-    auc = roc_auc_score(y_true, y_prob)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-    print(f"\n  AUC={auc:.4f}  F1={f1:.4f}")
-    print(classification_report(y_true, y_pred, target_names=["No Finding", finding]))
-
-    # ── Save confusion matrix plot ─────────────────────────────────────────────
-    cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots(figsize=(5, 4))
-    ConfusionMatrixDisplay(cm, display_labels=["No Finding", finding]).plot(ax=ax)
-    ax.set_title(f"{finding} — {label}")
-    cm_path = RESULTS_DIR / f"cm_{finding}_{label}.png"
-    fig.savefig(cm_path, bbox_inches="tight", dpi=150)
-    plt.close(fig)
-    print(f"  Confusion matrix saved → {cm_path}")
-
-    # ── Save ROC curve ────────────────────────────────────────────────────────
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    fig, ax = plt.subplots(figsize=(5, 4))
-    ax.plot(fpr, tpr, label=f"AUC={auc:.3f}")
-    ax.plot([0, 1], [0, 1], "k--")
-    ax.set_xlabel("FPR")
-    ax.set_ylabel("TPR")
-    ax.set_title(f"ROC — {finding} ({label})")
-    ax.legend()
-    roc_path = RESULTS_DIR / f"roc_{finding}_{label}.png"
-    fig.savefig(roc_path, bbox_inches="tight", dpi=150)
-    plt.close(fig)
+    # Per-class F1
+    f1_per = f1_score(y_true, y_pred, average=None, labels=list(range(len(classes))), zero_division=0)
+    per_class_f1 = {cls: round(float(f1_per[i]), 4) for i, cls in enumerate(classes)}
+    macro_f1 = round(float(f1_score(y_true, y_pred, average="macro", zero_division=0)), 4)
 
     return {
-        "finding": finding,
-        "condition": label,
-        "n_positives": n_pos,
-        "n_negatives": n_neg,
-        "auc": round(float(auc), 4),
-        "f1": round(float(f1), 4),
+        "per_class_auc": per_class_auc,
+        "macro_auc": round(float(macro_auc), 4),
+        "per_class_f1": per_class_f1,
+        "macro_f1": macro_f1,
     }
 
 
-def main(finding: str, epochs: int, batch_size: int) -> None:
-    """Run both conditions and write a summary JSON to results/."""
-    results = []
-    for include_synth in [False, True]:
-        metrics = run_experiment(finding, include_synth, epochs, batch_size)
-        results.append(metrics)
+def save_confusion_matrix(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    classes: list[str],
+    output_path: Path,
+    title: str,
+) -> None:
+    """Render and save a labelled confusion matrix plot."""
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(len(classes))))
+    display_labels = [c.replace("_", " ") for c in classes]
 
-    summary_path = RESULTS_DIR / f"summary_{finding}.json"
-    with open(summary_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nSummary saved → {summary_path}")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ConfusionMatrixDisplay(cm, display_labels=display_labels).plot(
+        ax=ax, colorbar=False, cmap="Blues"
+    )
+    ax.set_title(title, pad=12)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"  Confusion matrix saved → {output_path.name}")
 
-    # Side-by-side comparison
-    a, b = results
-    print(f"\n{'─'*40}")
-    print(f"{'Metric':<10} {'Real Only':>12} {'Real+Synth':>12}")
-    print(f"{'─'*40}")
-    print(f"{'AUC':<10} {a['auc']:>12.4f} {b['auc']:>12.4f}")
-    print(f"{'F1':<10} {a['f1']:>12.4f} {b['f1']:>12.4f}")
-    print(f"{'─'*40}")
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def compute_class_weights(labels: list[int], num_classes: int) -> torch.Tensor:
+    """
+    Return inverse-frequency class weights to handle imbalance.
+    Weight for class c = total_samples / (num_classes * count_c).
+    """
+    counts = np.bincount(labels, minlength=num_classes).astype(float)
+    counts = np.where(counts == 0, 1, counts)  # avoid division by zero
+    weights = len(labels) / (num_classes * counts)
+    return torch.tensor(weights, dtype=torch.float32)
+
+
+def stratified_split(
+    dataset: ImageFolderFlat, test_size: float, seed: int
+) -> tuple[Subset, Subset]:
+    """Return (train_subset, test_subset) with a stratified 80/20 split."""
+    labels = dataset.labels()
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_idx, test_idx = next(sss.split(np.zeros(len(labels)), labels))
+    return Subset(dataset, train_idx.tolist()), Subset(dataset, test_idx.tolist())
+
+
+def print_comparison_table(
+    baseline: dict, augmented: dict, classes: list[str]
+) -> None:
+    """Print a side-by-side AUC and F1 comparison between the two conditions."""
+    col = 14
+    print(f"\n{'─' * 70}")
+    print(f"{'':20} {'── AUC ──':^25}    {'── F1 ──':^25}")
+    print(f"{'Class':<20} {'Baseline':>{col}} {'Augmented':>{col}}    {'Baseline':>{col}} {'Augmented':>{col}}")
+    print(f"{'─' * 70}")
+
+    for cls in classes:
+        b_auc = baseline["per_class_auc"][cls]
+        a_auc = augmented["per_class_auc"][cls]
+        b_f1 = baseline["per_class_f1"][cls]
+        a_f1 = augmented["per_class_f1"][cls]
+        label = cls.replace("_", " ")
+        print(
+            f"{label:<20} {b_auc:>{col}.4f} {a_auc:>{col}.4f}"
+            f"    {b_f1:>{col}.4f} {a_f1:>{col}.4f}"
+        )
+
+    print(f"{'─' * 70}")
+    print(
+        f"{'Macro':20} {baseline['macro_auc']:>{col}.4f} {augmented['macro_auc']:>{col}.4f}"
+        f"    {baseline['macro_f1']:>{col}.4f} {augmented['macro_f1']:>{col}.4f}"
+    )
+    print(f"{'─' * 70}\n")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+
+def main(epochs: int, batch_size: int, seed: int) -> None:
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    num_classes = len(CLASSES)
+
+    # ── Load real dataset and split ───────────────────────────────────────────
+    print("Loading real images …")
+    real_ds = ImageFolderFlat(REAL_DIR, CLASSES, transform=TRANSFORM)
+
+    if len(real_ds) == 0:
+        raise RuntimeError(
+            f"No images found in {REAL_DIR}. "
+            "Run scripts/filter_images.py first."
+        )
+
+    per_class = {cls: 0 for cls in CLASSES}
+    for _, label in real_ds.samples:
+        per_class[CLASSES[label]] += 1
+    for cls, n in per_class.items():
+        print(f"  {cls.replace('_', ' '):<16} {n:>5} images")
+    print(f"  {'Total':<16} {len(real_ds):>5} images\n")
+
+    train_real, test_ds = stratified_split(real_ds, test_size=0.2, seed=seed)
+
+    test_loader = DataLoader(
+        test_ds, batch_size=batch_size, shuffle=False, num_workers=0
+    )
+
+    # ── Condition A: Baseline (real only) ─────────────────────────────────────
+    print("=" * 60)
+    print("  Condition A: Baseline — real images only")
+    print("=" * 60)
+
+    train_labels_a = [real_ds.samples[i][1] for i in train_real.indices]
+    weights_a = compute_class_weights(train_labels_a, num_classes)
+
+    train_loader_a = DataLoader(
+        train_real, batch_size=batch_size, shuffle=True, num_workers=0
+    )
+
+    model_a = build_model(num_classes)
+    print(f"  Training on {len(train_real)} samples …")
+    train(model_a, train_loader_a, epochs, weights_a)
+
+    y_true, y_prob_a = predict(model_a, test_loader)
+    y_pred_a = y_prob_a.argmax(axis=1)
+
+    metrics_a = compute_metrics(y_true, y_prob_a, CLASSES)
+    print(f"\n  Macro AUC={metrics_a['macro_auc']:.4f}  Macro F1={metrics_a['macro_f1']:.4f}")
+    print(classification_report(
+        y_true, y_pred_a,
+        target_names=[c.replace("_", " ") for c in CLASSES],
+        zero_division=0,
+    ))
+
+    with open(RESULTS_DIR / "baseline_metrics.json", "w") as f:
+        json.dump(metrics_a, f, indent=2)
+
+    save_confusion_matrix(
+        y_true, y_pred_a, CLASSES,
+        RESULTS_DIR / "baseline_confusion_matrix.png",
+        title="Baseline (real only)",
+    )
+
+    # ── Condition B: Augmented (real + synthetic) ──────────────────────────────
+    print("\n" + "=" * 60)
+    print("  Condition B: Augmented — real + synthetic images")
+    print("=" * 60)
+
+    synth_ds = ImageFolderFlat(SYNTH_DIR, CLASSES, transform=TRANSFORM)
+
+    if len(synth_ds) == 0:
+        print(
+            "  [WARN] No synthetic images found in data/synthetic_images/. "
+            "Run scripts/generate_images.py to produce them.\n"
+            "  Skipping augmented condition."
+        )
+        return
+
+    synth_per_class = {cls: 0 for cls in CLASSES}
+    for _, label in synth_ds.samples:
+        synth_per_class[CLASSES[label]] += 1
+    for cls, n in synth_per_class.items():
+        if n:
+            print(f"  {cls.replace('_', ' '):<16} {n:>5} synthetic images")
+    print(f"  {'Total':<16} {len(synth_ds):>5} synthetic images\n")
+
+    # Combine real training split + all synthetic images into one dataset
+    from torch.utils.data import ConcatDataset
+
+    augmented_train = ConcatDataset([train_real, synth_ds])
+
+    # Recompute class weights over the combined training set
+    train_labels_b = (
+        train_labels_a
+        + [label for _, label in synth_ds.samples]
+    )
+    weights_b = compute_class_weights(train_labels_b, num_classes)
+
+    train_loader_b = DataLoader(
+        augmented_train, batch_size=batch_size, shuffle=True, num_workers=0
+    )
+
+    # Fresh model — same pretrained init, not fine-tuned condition-A weights
+    model_b = build_model(num_classes)
+    print(f"  Training on {len(augmented_train)} samples …")
+    train(model_b, train_loader_b, epochs, weights_b)
+
+    _, y_prob_b = predict(model_b, test_loader)
+    y_pred_b = y_prob_b.argmax(axis=1)
+
+    metrics_b = compute_metrics(y_true, y_prob_b, CLASSES)
+    print(f"\n  Macro AUC={metrics_b['macro_auc']:.4f}  Macro F1={metrics_b['macro_f1']:.4f}")
+    print(classification_report(
+        y_true, y_pred_b,
+        target_names=[c.replace("_", " ") for c in CLASSES],
+        zero_division=0,
+    ))
+
+    with open(RESULTS_DIR / "augmented_metrics.json", "w") as f:
+        json.dump(metrics_b, f, indent=2)
+
+    save_confusion_matrix(
+        y_true, y_pred_b, CLASSES,
+        RESULTS_DIR / "augmented_confusion_matrix.png",
+        title="Augmented (real + synthetic)",
+    )
+
+    # ── Comparison table ───────────────────────────────────────────────────────
+    print_comparison_table(metrics_a, metrics_b, CLASSES)
+    print("All results saved to results/")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train and evaluate MobileNetV3 classifier.")
-    parser.add_argument(
-        "--finding",
-        type=str,
-        default="Pneumothorax",
-        choices=["Pneumothorax", "Emphysema"],
-        help="Rare finding class to classify (default: Pneumothorax)",
+    parser = argparse.ArgumentParser(
+        description="Train and evaluate MobileNetV3 with and without synthetic augmentation."
     )
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs (default: 10)")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size (default: 32)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
-    main(finding=args.finding, epochs=args.epochs, batch_size=args.batch_size)
+    main(epochs=args.epochs, batch_size=args.batch_size, seed=args.seed)
