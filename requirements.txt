@@ -1,0 +1,13 @@
+anthropic
+requests
+pandas
+numpy
+Pillow
+scikit-learn
+torch
+torchvision
+matplotlib
+kaggle
+torch-fidelity
+python-dotenv
+tqdm

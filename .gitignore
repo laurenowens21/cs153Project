@@ -1,0 +1,48 @@
+# Dataset archives and raw images
+*.tar.gz
+*.tar
+*.zip
+*.jpg
+*.jpeg
+*.png
+*.csv
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Results (large binary artifacts)
+results/*.pkl
+results/*.pt
+results/*.pth
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
