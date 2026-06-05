@@ -19,7 +19,7 @@ The NIH Chest X-ray14 dataset contains over 100,000 images but many pathology cl
 Training classifiers directly on imbalanced data yields poor sensitivity and accuracy on these minority classes, 
 many of which are medically significant.
 Previous work has investigated the use of synthetic data generation to add more images to these datasets or add more
-demographic diversity to these datasets and have shown that most promising results have occurred in models trained on combination of real and synthetic data ([Stanford Medicine Magazine]((https://stanmed.stanford.edu/generative-ai-synthetic-data-promise/)). Therefore, I chose to use Cloudflare diffusion models to generate medical images and
+demographic diversity to these datasets and have shown that most promising results have occurred in models trained on combination of real and synthetic data ([Stanford Medicine Magazine]([url](https://stanmed.stanford.edu/generative-ai-synthetic-data-promise/)), [Chen et al]([url](https://pmc.ncbi.nlm.nih.gov/articles/PMC9353344/#R71)).. Therefore, I chose to use Cloudflare diffusion models to generate medical images and
 LLMs to generate medical records to evaluate if the addition of these synthetic records would result in increased detection of rare medical findings.
 
 ---
