@@ -1,26 +1,62 @@
-<<<<<<< HEAD
+
 # Synthetic Data Augmentation for Rare Chest X-Ray Finding Classification
 
 ## Project Overview
 
-This project investigates whether augmenting a real medical imaging dataset with LLM-generated
-synthetic radiology reports and AI-generated chest X-ray images improves binary classification
-of rare findings in the NIH ChestX-ray14 dataset.
-
-Three rare pathology classes are studied: **Hernia**, **Pneumothorax**, and **Emphysema**.
+This project investigates the augmentation of synthetic medical imaging data (X-ray images) and 
+associated patient reports in a real medical imaging dataset. In this project, I couple the 
+synthetic medical images with LLM-generated synthetic radiology reports to introduce symptom, age, gender, 
+and associated condition diversity. Focusing on  **Pneumothorax**, and **Emphysema**, we aim to see if the
+LLM-generated report and diffusion model-generated chest X-ray images improves binary classification of these conditions 
+in the NIH ChestX-ray14 dataset.
 
 ---
 
-## Motivation
+## Problem and Insight
 
-Rare medical findings suffer from severe class imbalance in public datasets. NIH ChestX-ray14
-contains over 100,000 images but many pathology classes have fewer than 2,000 labeled examples.
-Training classifiers directly on imbalanced data yields poor sensitivity on the minority class —
-exactly the class that matters most clinically.
+In public medical imaging datasets, there is severe class imbalance for rare or anatomically 
+minor medical findings. The NIH Chest X-ray14 dataset contains over 100,000 images but many 
+pathology classes have fewer than 2,000 labeled examples. Training classifiers directly on 
+imbalanced data yields poor sensitivity and accuracy on these minority classes, many of which 
+are medically significant.
 
-Synthetic data generation offers a potential mitigation: if generated images are realistic enough,
-they can serve as additional training signal. This project tests that hypothesis with a controlled
-before/after experiment.
+Previous work has investigated the use of synthetic data generation to add more images to these 
+datasets or add more demographic diversity to these datasets and have shown that most promising 
+results have occurred in models trained on combination of real and synthetic data 
+([Stanford Medicine Magazine](https://stanmed.stanford.edu/generative-ai-synthetic-data-promise/), 
+[Chen et al](https://pmc.ncbi.nlm.nih.gov/articles/PMC9353344/#R71)). Therefore, I chose to use 
+Cloudflare diffusion models to generate medical images and LLMs to generate medical records to 
+evaluate if the addition of these synthetic records would result in increased detection of rare 
+medical findings.
+
+---
+
+## Technical Work and Experiment
+
+***Image Generation***
+For the generation of synthetic chest X-rays, I used Cloudflare Workers AI's Stable Diffusion 
+v1.5 to convert each generated report into a corresponding image. A key design decision here 
+was to use image-to-image (img2img) generation rather than text-to-image generation. Rather than generating an X-ray from text alone, 
+each synthetic image was conditioned on a real reference image randomly sampled from the NIH ChestX-ray14 dataset for the corresponding 
+class. Img2img approach preserves the structural properties of real X-rays while still introducing pathology-specific variation through the text prompt.
+
+To construct the image prompt, I extracted the Impression section from each generated report 
+and prepended it with a image-specific prefix to anchor the model to the medical imaging 
+domain:
+
+"Frontal chest X-ray radiograph, grayscale, DICOM-style medical imaging, high contrast, showing: [Impression text]"
+
+***Record Generation***
+A popular topic among our class discussions was the importnance of prompt engineering. I performed two experiments, one with LLM-generated prompts and one with clinician prompts.
+Therefore, I experimented with three LLM-prompting strategies for the generation of medical records. : 
+        1. Generic Context: Provide the LLM with the condition and tell it to vary a small subset of the features of the records (anatomical size, severity, laterality)
+        2. Clinical Context: Further context is added to the Generic Context complete with medical terminology and quantitative axis (anatomical distribution, associated findings) for the introduction of medical context. (Example:  "- Size: small apical (<15% volume loss), moderate (15–60%), or large/tension (>60% with mediastinal shift)"). 
+        3. Few-Shot Prompts: The LLM is given an example of a patient record with Pneumothorax or Emphysema and asked to generate a new, different report.
+
+
+***Classifier Training and Evaluation***
+A MobileNetV3-Small network was fine-tuned for each medical condition using a two-class classification setup: Pneumothorax and Emphysema. The real NIH images from data/rare_findings/ were split 80/20 into train and test sets to preserve class proportions across splits. The test set was held fixed across all conditions and only the training set was augmented with synthetic images.
+For each prompting strategy, the 50 synthetic images per class were appended to the real training split, and a fresh model was trained  for 10 epochs using Adam (lr=1e-4) with inverse-frequency class weighting to address imbalance. This resulted in four total conditions: one baseline (real images only) and one augmented condition per prompting strategy. Evaluation metrics, per-class and macro-averaged AUC and F1, were computed on the real image test set for all conditions.
 
 ---
 
@@ -82,7 +118,7 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in your API keys
+# Edit .env and fill in your Anthropic API key and you Cloudflare Account ID and API token.
 ```
 
 ### 5. Download NIH ChestX-ray14
@@ -114,7 +150,7 @@ python src/evaluate.py
 python src/fid_score.py
 ```
 
-Results are written to `results/`.
+Results are written to `results/` to be evaluated.
 
 ---
 
@@ -130,29 +166,18 @@ Results are written to `results/`.
 ---
 
 ## Limitations
-
-- Synthetic images are generated by a general-purpose text-to-image model not fine-tuned on
-  medical data. Image fidelity may be insufficient for meaningful data augmentation.
-- Claude generates plausible but not clinically validated radiology reports. Reports should not
-  be used for any clinical purpose.
-- The NIH ChestX-ray14 dataset itself contains label noise (~10–20% error rate per the original
-  paper), which affects baseline performance.
-- This study uses a single classifier architecture (MobileNetV3) and a single train/test split.
-  Results may not generalize.
-- Compute constraints limit the number of synthetic samples generated per class.
-
+ - Generated images lack the ability to diminish quality of the images resulting from technical malfunctions or patient movement during the scan. This is an important facet and ingrained challenge when working with medical data that AI over-optimizes for.
+ - Because the NIH Chest X-ray14 dataset is too large to locally host, this project only works with a small subset of this image dataset and uses one single train/test split. Results might not be generalizable without cross-fold validation or a larger training and test set.
+ - A GPU was not used for this project. Therefore. compute constraints limit the number of synthetic samples generated per class. 
+  - Baseline synthetic report and prompts are generated by a general-purpose text-to-image model not fine-tuned on
+  medical data. 
 ---
 
 ## AI Usage Disclosure
+I used **Anthropic Claude** (`claude-sonnet-4-6`) and **Anthropic Claude Code Agent** for the code generation for this project, the authorship of the Set Up instructions for the README, generation of the synthetic radiology report text, debugging code
 
-This project uses AI systems as the *subject of study* as well as *tools for development*:
+I used **Cloudflare Workers AI**, specifically the Stable Diffusion XL model, to generate synthetic chest X-ray images.
 
-- **Anthropic Claude** (`claude-sonnet-4-6`): generates synthetic radiology report text
-  (pipeline component) and was used during development for code review and debugging assistance.
-- **Cloudflare Workers AI** (Stable Diffusion XL): generates synthetic chest X-ray images
-  (pipeline component).
-- All experimental results and analysis were performed by the project authors.
-=======
-# cs153Project
-Synthetic Data Generation for Patient Health Information Protection in Large Language Models
->>>>>>> d2c3b3225c7c6043d1d3362e8154a09034a30b2c
+All experimental results,analysis, video script, and authorship of the text portions of the README were performed by myself without the use of AI.
+
+I did not have any collaborators nor did I use any starter code.
