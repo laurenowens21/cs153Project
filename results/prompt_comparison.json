@@ -1,0 +1,58 @@
+{
+  "baseline": {
+    "per_class_auc": {
+      "Emphysema": 0.5767,
+      "No_Finding": 0.7094,
+      "Pneumothorax": 0.6749
+    },
+    "macro_auc": 0.6537,
+    "per_class_f1": {
+      "Emphysema": 0.2857,
+      "No_Finding": 0.0548,
+      "Pneumothorax": 0.6013
+    },
+    "macro_f1": 0.3139
+  },
+  "promptA": {
+    "per_class_auc": {
+      "Emphysema": 0.5396,
+      "No_Finding": 0.7803,
+      "Pneumothorax": 0.7153
+    },
+    "macro_auc": 0.6784,
+    "per_class_f1": {
+      "Emphysema": 0.1449,
+      "No_Finding": 0.2169,
+      "Pneumothorax": 0.6129
+    },
+    "macro_f1": 0.3249
+  },
+  "promptB": {
+    "per_class_auc": {
+      "Emphysema": 0.5798,
+      "No_Finding": 0.7777,
+      "Pneumothorax": 0.7067
+    },
+    "macro_auc": 0.688,
+    "per_class_f1": {
+      "Emphysema": 0.225,
+      "No_Finding": 0.1039,
+      "Pneumothorax": 0.5856
+    },
+    "macro_f1": 0.3048
+  },
+  "promptC": {
+    "per_class_auc": {
+      "Emphysema": 0.6082,
+      "No_Finding": 0.7617,
+      "Pneumothorax": 0.7389
+    },
+    "macro_auc": 0.7029,
+    "per_class_f1": {
+      "Emphysema": 0.2418,
+      "No_Finding": 0.1667,
+      "Pneumothorax": 0.6626
+    },
+    "macro_f1": 0.357
+  }
+}
