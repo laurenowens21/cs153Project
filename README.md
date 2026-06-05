@@ -51,7 +51,6 @@ A popular topic among our class discussions was the importnance of prompt engine
 Therefore, I experimented with three LLM-prompting strategies for the generation of medical records. : 
         1. Generic Context: Provide the LLM with the condition and tell it to vary a small subset of the features of the records (anatomical size, severity, laterality)
         2. Clinical Context: Further context is added to the Generic Context complete with medical terminology and quantitative axis (anatomical distribution, associated findings) for the introduction of medical context. (Example:  "- Size: small apical (<15% volume loss), moderate (15–60%), or large/tension (>60% with mediastinal shift)")
-        
         3. Few-Shot Prompts: The LLM is given an example of a patient record with Pneumothorax or Emphysema and asked to generate a new, different report.
 
 
