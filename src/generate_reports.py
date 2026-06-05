@@ -73,10 +73,15 @@ GENERIC_CONTEXT = {
     "Pneumothorax": (
         "a pneumothorax visible on chest X-ray. "
         "Vary the size (small, moderate, large) and laterality across reports."
+        "Vary the severity (mild, moderate, severe) across reports."
+        "Vary the clinical context (spontaneous, traumatic, iatrogenic) across reports."
+        "Vary the quality of the X-ray (good quality, portable AP, etc.) across reports."
     ),
     "Emphysema": (
         "pulmonary emphysema visible on chest X-ray. "
         "Vary the severity (mild, moderate, severe) across reports."
+        "Vary the quality of the X-ray (good quality, lackluster quality, rotated) across reports."
+        "Vary the clinical context (smoking history, COPD, etc.) across reports."
     ),
 }
 
@@ -91,6 +96,8 @@ CLINICAL_CONTEXT = {
         "- Patient demographics: age 18–75, either sex, varied clinical indication "
         "(spontaneous, traumatic, iatrogenic, or underlying lung disease)\n"
         "- Technique: portable AP, upright PA, or lateral decubitus as appropriate"
+        "-Side effects: tension physiology signs, mediastinal shift, diaphragmatic inversion"
+        "- Also look for fluid levels, particularly in setting of rib fractures or trauma"
     ),
     "Emphysema": (
         "pulmonary emphysema (COPD). Vary the following realistically across reports:\n"
@@ -102,6 +109,9 @@ CLINICAL_CONTEXT = {
         "spontaneous pneumothorax, or superimposed infection\n"
         "- Patient demographics: age 50–80, heavy smoker history, varied clinical indication\n"
         "- Technique: PA and lateral, or portable AP"
+        "- Quality: good quality, rotated, underinflated, or overinflated"
+        "- include a range of clinical contexts such as stable COPD, acute exacerbation"
+        "- include a range of vascular findings such as prominent pulmonary arteries, pruning of peripheral vessels, or normal vascularity"
     ),
 }
 
@@ -157,6 +167,8 @@ The lungs are markedly hyperinflated bilaterally with flattening of both hemidia
 IMPRESSION:
 1. Severe pulmonary emphysema with bilateral hyperinflation, bilateral diaphragmatic flattening, and upper lobe bullous disease, right greater than left.
 2. Findings consistent with advanced COPD.
+3. Increased risk for spontaneous pneumothorax given presence of bullae.
+4. Increased vascular attenuation consistent with pulmonary hypertension.
 
 --- EXAMPLE 2 (Emphysema) ---
 CLINICAL INDICATION: 72-year-old female with known COPD, presenting for annual follow-up. Chronic dyspnea on exertion.
