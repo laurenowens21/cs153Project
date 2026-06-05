@@ -47,15 +47,15 @@ domain:
 "Frontal chest X-ray radiograph, grayscale, DICOM-style medical imaging, high contrast, showing: [Impression text]"
 
 ***Record Generation***
-A popular topic among our class discussions was the importnance of prompt engineering. I performed two experiments, one with LLM-generated prompts and one with clinician prompts.
-Therefore, I experimented with three LLM-prompting strategies for the generation of medical records. : 
+A popular topic among our class discussions was the importnance of prompt engineering. I performed two experiments, one with clinician-informed prompts and one with LLM-generated prompts.
+Therefore, I experimented with three LLM-prompting strategies using Anthropic Sonnet 4.6 for the generation of textual medical records.: 
         1. Generic Context: Provide the LLM with the condition and tell it to vary a small subset of the features of the records (anatomical size, severity, laterality)
         2. Clinical Context: Further context is added to the Generic Context complete with medical terminology and quantitative axis (anatomical distribution, associated findings) for the introduction of medical context. (Example:  "- Size: small apical (<15% volume loss), moderate (15–60%), or large/tension (>60% with mediastinal shift)"). 
         3. Few-Shot Prompts: The LLM is given an example of a patient record with Pneumothorax or Emphysema and asked to generate a new, different report.
 
 
 ***Classifier Training and Evaluation***
-A MobileNetV3-Small network was fine-tuned for each medical condition using a two-class classification setup: Pneumothorax and Emphysema. The real NIH images from data/rare_findings/ were split 80/20 into train and test sets to preserve class proportions across splits. The test set was held fixed across all conditions and only the training set was augmented with synthetic images.
+A MobileNetV3-Small network was fine-tuned for each medical condition using a three-class classification setup: Pneumothorax,Emphysema, and No Finding. The real NIH images from data/rare_findings/ were split 80/20 into train and test sets to preserve class proportions across splits. The test set was held fixed across all conditions and only the training set was augmented with synthetic images.
 For each prompting strategy, the 50 synthetic images per class were appended to the real training split, and a fresh model was trained  for 10 epochs using Adam (lr=1e-4) with inverse-frequency class weighting to address imbalance. This resulted in four total conditions: one baseline (real images only) and one augmented condition per prompting strategy. Evaluation metrics, per-class and macro-averaged AUC and F1, were computed on the real image test set for all conditions.
 
 ---
@@ -156,12 +156,19 @@ Results are written to `results/` to be evaluated.
 
 ## Evaluation Results
 
-> *To be filled in after experiments complete.*
+Emphysema: Synthetic Image:  <img width="512" height="512" alt="synth_00000013_042" src="https://github.com/user-attachments/assets/61846efe-4c4a-4bb0-aa42-44e84de6f653" />
+              Real Image: <img width="1024" height="1024" alt="00000013_042" src="https://github.com/user-attachments/assets/81838a57-9b39-4859-a0b6-435e2aa44d4d" />
 
-| Condition | AUC | F1 | FID |
-|-----------|-----|----|-----|
-| Real only | —   | —  | N/A |
-| Real + Synthetic | — | — | — |
+Pneumothorax: Real Image: <img width="1024" height="1024" alt="00000013_011" src="https://github.com/user-attachments/assets/cdba89e8-8d77-4b44-a1c1-851db7030ca2" />
+              Synthetic Image:   <img width="512" height="512" alt="synth_00000013_011" src="https://github.com/user-attachments/assets/d3c53895-752f-4f84-8348-adbe1c07538d" />
+
+
+<img width="900" height="750" alt="promptA_confusion_matrix" src="https://github.com/user-attachments/assets/66be3dab-fd58-4417-b7d9-8ed20ec5fa8d" />
+
+V1 refers to the LLM-generated prompts. V2 refers to the LLM-generated prompts with clinician input. 
+The above heatmap suggests that the augmented (real + synthetic) data outperforms the baseline (real only) in AUC, suggesting that there is a classification improvement among Pneumothorax, Emphysema, and No Finding. The best record generation prompts are the V1 Few-Shot and the V2 Generic Context. Clinician input was primarily added to the Clinical context and Few-Shot prompts. indicating that if clinician inputs are to be added, they should be appropriately engineered. However, Few-Shot prompting performs consistently well, indicating that the Cloudflare model and LLM learn better with concrete examples rather than general context.
+
+In the image generation, Pneumothorax generates more realistic images than Emphysema. This is likely due to the fact that Pneumothorax has more anatomically rigid boundaries than Emphysema, as collapsed lungs (Pneumothorax) are more noticeable than the small features of Emphysema. This causes some noise in the Emphysema synthetic images. Also, there was about 355 images of Pneumothorax versus 155 for Emphysema.This class imbalance might result in less accurate images for the minority class.
 
 ---
 
