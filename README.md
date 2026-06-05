@@ -18,7 +18,7 @@ In public medical imaging datasets, there is severe class imbalance for rare or 
 minor medical findings. The NIH Chest X-ray14 dataset contains over 100,000 images but many 
 pathology classes have fewer than 2,000 labeled examples. Training classifiers directly on 
 imbalanced data yields poor sensitivity and accuracy on these minority classes, many of which 
-are medically significant.
+are medically significant. 
 
 Previous work has investigated the use of synthetic data generation to add more images to these 
 datasets or add more demographic diversity to these datasets and have shown that most promising 
@@ -164,6 +164,14 @@ Pneumothorax: Real Image: <img width="1024" height="1024" alt="00000013_011" src
 
 
 <img width="900" height="750" alt="promptA_confusion_matrix" src="https://github.com/user-attachments/assets/66be3dab-fd58-4417-b7d9-8ed20ec5fa8d" />
+
+
+| Condition | Emphysema AUC | Pneumothorax AUC | No Finding AUC | Macro AUC | Macro F1 |
+|-----------|--------------|-----------------|----------------|-----------|----------|
+| Baseline (real only) | 0.5767 | 0.6749 | 0.7094 | 0.6537 | 0.3139 |
+| Generic prompt | 0.5396 | 0.7153 | 0.7803 | 0.6784 | 0.3249 |
+| Clinical prompt | 0.5798 | 0.7067 | 0.7777 | 0.6880 | 0.3048 |
+| **Few-shot prompt** | **0.6082** | **0.7389** | **0.7617** | **0.7029** | **0.3570** |
 
 V1 refers to the LLM-generated prompts. V2 refers to the LLM-generated prompts with clinician input. 
 The above heatmap suggests that the augmented (real + synthetic) data outperforms the baseline (real only) in AUC, suggesting that there is a classification improvement among Pneumothorax, Emphysema, and No Finding. The best record generation prompts are the V1 Few-Shot and the V2 Generic Context. Clinician input was primarily added to the Clinical context and Few-Shot prompts. indicating that if clinician inputs are to be added, they should be appropriately engineered. However, Few-Shot prompting performs consistently well, indicating that the Cloudflare model and LLM learn better with concrete examples rather than general context.
