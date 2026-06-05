@@ -138,10 +138,7 @@ Results are written to `results/` to be evaluated.
 ---
 
 ## AI Usage Disclosure
-I used **Anthropic Claude** (`claude-sonnet-4-6`) and **Anthropic Claude Code Agent** for:
-        - the code generation for this project
-        - generation of the synthetic radiology report text
-        - debugging code
+I used **Anthropic Claude** (`claude-sonnet-4-6`) and **Anthropic Claude Code Agent** for the code generation for this project, the authorship of the Set Up instructions, generation of the synthetic radiology report text, debugging code
 
 I used **Cloudflare Workers AI**, specifically the Stable Diffusion XL model, to generate synthetic chest X-ray images.
 
