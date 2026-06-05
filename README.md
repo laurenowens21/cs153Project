@@ -14,13 +14,50 @@ in the NIH ChestX-ray14 dataset.
 
 ## Problem and Insight
 
-In public medical imaging datasets, there is severe class imbalance for rare or anatomically minor medical findings.
-The NIH Chest X-ray14 dataset contains over 100,000 images but many pathology classes have fewer than 2,000 labeled examples.
-Training classifiers directly on imbalanced data yields poor sensitivity and accuracy on these minority classes, 
-many of which are medically significant.
-Previous work has investigated the use of synthetic data generation to add more images to these datasets or add more
-demographic diversity to these datasets and have shown that most promising results have occurred in models trained on combination of real and synthetic data ([Stanford Medicine Magazine]([url](https://stanmed.stanford.edu/generative-ai-synthetic-data-promise/)), [Chen et al]([url](https://pmc.ncbi.nlm.nih.gov/articles/PMC9353344/#R71)).. Therefore, I chose to use Cloudflare diffusion models to generate medical images and
-LLMs to generate medical records to evaluate if the addition of these synthetic records would result in increased detection of rare medical findings.
+In public medical imaging datasets, there is severe class imbalance for rare or anatomically 
+minor medical findings. The NIH Chest X-ray14 dataset contains over 100,000 images but many 
+pathology classes have fewer than 2,000 labeled examples. Training classifiers directly on 
+imbalanced data yields poor sensitivity and accuracy on these minority classes, many of which 
+are medically significant.
+
+Previous work has investigated the use of synthetic data generation to add more images to these 
+datasets or add more demographic diversity to these datasets and have shown that most promising 
+results have occurred in models trained on combination of real and synthetic data 
+([Stanford Medicine Magazine](https://stanmed.stanford.edu/generative-ai-synthetic-data-promise/), 
+[Chen et al](https://pmc.ncbi.nlm.nih.gov/articles/PMC9353344/#R71)). Therefore, I chose to use 
+Cloudflare diffusion models to generate medical images and LLMs to generate medical records to 
+evaluate if the addition of these synthetic records would result in increased detection of rare 
+medical findings.
+
+---
+
+## Technical Work and Experiment
+
+***Image Generation***
+For the generation of synthetic chest X-rays, I used Cloudflare Workers AI's Stable Diffusion 
+v1.5 to convert each generated report into a corresponding image. A key design decision here 
+was to use image-to-image (img2img) generation rather than text-to-image generation. Rather than generating an X-ray from text alone, 
+each synthetic image was conditioned on a real reference image randomly sampled from the NIH ChestX-ray14 dataset for the corresponding 
+class. Img2img approach preserves the structural properties of real X-rays while still introducing pathology-specific variation through the text prompt.
+
+To construct the image prompt, I extracted the Impression section from each generated report 
+and prepended it with a image-specific prefix to anchor the model to the medical imaging 
+domain:
+
+"Frontal chest X-ray radiograph, grayscale, DICOM-style medical imaging, high contrast, showing: [Impression text]"
+
+***Record Generation***
+A popular topic among our class discussions was the importnance of prompt engineering. 
+Therefore, I experimented with three LLM-prompting strategies for the generation of medical records. : 
+        1. Generic Context: Provide the LLM with the condition and tell it to vary a small subset of the features of the records (anatomical size, severity, laterality)
+        2. Clinical Context: Further context is added to the Generic Context complete with medical terminology and quantitative axis (anatomical distribution, associated findings) for the introduction of medical context. (Example:  "- Size: small apical (<15% volume loss), moderate (15–60%), or large/tension (>60% with mediastinal shift)")
+        
+        3. Few-Shot Prompts: The LLM is given an example of a patient record with Pneumothorax or Emphysema and asked to generate a new, different report.
+
+
+***Classifier Training and Evaluation***
+A MobileNetV3-Small network was fine-tuned for each medical condition using a two-class classification setup: Pneumothorax and Emphysema. The real NIH images from data/rare_findings/ were split 80/20 into train and test sets to preserve class proportions across splits. The test set was held fixed across all conditions and only the training set was augmented with synthetic images.
+For each prompting strategy, the 50 synthetic images per class were appended to the real training split, and a fresh model was trained  for 10 epochs using Adam (lr=1e-4) with inverse-frequency class weighting to address imbalance. This resulted in four total conditions: one baseline (real images only) and one augmented condition per prompting strategy. Evaluation metrics, per-class and macro-averaged AUC and F1, were computed on the real image test set for all conditions.
 
 ---
 
@@ -138,10 +175,10 @@ Results are written to `results/` to be evaluated.
 ---
 
 ## AI Usage Disclosure
-I used **Anthropic Claude** (`claude-sonnet-4-6`) and **Anthropic Claude Code Agent** for the code generation for this project, the authorship of the Set Up instructions, generation of the synthetic radiology report text, debugging code
+I used **Anthropic Claude** (`claude-sonnet-4-6`) and **Anthropic Claude Code Agent** for the code generation for this project, the authorship of the Set Up instructions for the README, generation of the synthetic radiology report text, debugging code
 
 I used **Cloudflare Workers AI**, specifically the Stable Diffusion XL model, to generate synthetic chest X-ray images.
 
-All experimental results and analysis were performed by myself without the use of AI.
+All experimental results,analysis, video script, and authorship of the text portions of the README were performed by myself without the use of AI.
 
 I did not have any collaborators nor did I use any starter code.
