@@ -3,24 +3,24 @@
 
 ## Project Overview
 
-This project investigates whether augmenting a real medical imaging dataset with LLM-generated
-synthetic radiology reports and AI-generated chest X-ray images improves binary classification
-of rare findings in the NIH ChestX-ray14 dataset.
-
-Three rare pathology classes are studied: **Hernia**, **Pneumothorax**, and **Emphysema**.
+This project investigates the augmentation of synthetic medical imaging data (X-ray images) and 
+associated patient reports in a real medical imaging dataset. In this project, I couple the 
+synthetic medical images with LLM-generated synthetic radiology reports to introduce symptom, age, gender, 
+and associated condition diversity. Focusing on  **Pneumothorax**, and **Emphysema**, we aim to see if the
+LLM-generated report and diffusion model-generated chest X-ray images improves binary classification of these conditions 
+in the NIH ChestX-ray14 dataset.
 
 ---
 
-## Motivation
+## Problem and Insight
 
-Rare medical findings suffer from severe class imbalance in public datasets. NIH ChestX-ray14
-contains over 100,000 images but many pathology classes have fewer than 2,000 labeled examples.
-Training classifiers directly on imbalanced data yields poor sensitivity on the minority class —
-exactly the class that matters most clinically.
-
-Synthetic data generation offers a potential mitigation: if generated images are realistic enough,
-they can serve as additional training signal. This project tests that hypothesis with a controlled
-before/after experiment.
+In public medical imaging datasets, there is severe class imbalance for rare or anatomically minor medical findings.
+The NIH Chest X-ray14 dataset contains over 100,000 images but many pathology classes have fewer than 2,000 labeled examples.
+Training classifiers directly on imbalanced data yields poor sensitivity and accuracy on these minority classes, 
+many of which are medically significant.
+Previous work has investigated the use of synthetic data generation to add more images to these datasets or add more
+demographic diversity to these datasets and have shown that most promising results have occurred in models trained on combination of real and synthetic data ([Stanford Medicine Magazine]((https://stanmed.stanford.edu/generative-ai-synthetic-data-promise/)). Therefore, I chose to use Cloudflare diffusion models to generate medical images and
+LLMs to generate medical records to evaluate if the addition of these synthetic records would result in increased detection of rare medical findings.
 
 ---
 
